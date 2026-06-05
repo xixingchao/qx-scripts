@@ -7,7 +7,7 @@
  *
  * QX 配置示例：
  *   [rewrite_local]
- *   ^https:\/\/www\.52pojie\.cn\/(?:home\.php|portal\.php) url script-request-header 52pj_qx.js
+ *   ^https:\/\/www\.52pojie\.cn\/portal\.php(?:$|\?) url script-request-header https://raw.githubusercontent.com/xixingchao/qx-scripts/main/qx/52pj_qx.js
  *
  *   [task_local]
  *   16 8 * * * 52pj_qx.js, tag=吾爱破解签到, enabled=true
@@ -52,7 +52,7 @@ async function main() {
   log(`Cookie 状态：${cookie ? `已捕获，长度 ${cookie.length}` : '未捕获'}`);
 
   if (!cookie) {
-    const msg = '请先开启 QX 重写和 MITM，用 Safari 登录并访问 https://www.52pojie.cn/home.php';
+    const msg = '请先开启 QX 重写和 MITM，用 Safari 登录并访问 https://www.52pojie.cn/portal.php';
     log(`未捕获 Cookie：${msg}`);
     notify(NAME, '未捕获 Cookie', msg);
     done();
