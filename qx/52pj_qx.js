@@ -9,6 +9,8 @@
  *   [rewrite_local]
  *   ^https:\/\/www\.52pojie\.cn\/portal\.php(?:$|\?) url script-request-header https://raw.githubusercontent.com/xixingchao/qx-scripts/main/qx/52pj_qx.js
  *   ^https:\/\/www\.52pojie\.cn\/portal\.php(?:$|\?) url script-response-header https://raw.githubusercontent.com/xixingchao/qx-scripts/main/qx/52pj_qx.js
+ *   ^https:\/\/www\.52pojie\.cn\/home\.php\?mod=task(?:&|$) url script-request-header https://raw.githubusercontent.com/xixingchao/qx-scripts/main/qx/52pj_qx.js
+ *   ^https:\/\/www\.52pojie\.cn\/home\.php\?mod=task(?:&|$) url script-response-header https://raw.githubusercontent.com/xixingchao/qx-scripts/main/qx/52pj_qx.js
  *
  *   [task_local]
  *   16 8 * * * 52pj_qx.js, tag=吾爱破解签到, enabled=true
@@ -55,7 +57,7 @@ async function main() {
   }
 
   log('模式：定时签到');
-  const cookie = read('PJ52_COOKIE');
+  let cookie = read('PJ52_COOKIE');
   const userAgent = read('PJ52_USER_AGENT') || DEFAULT_UA;
   log(`Cookie 状态：${cookie ? `已捕获，长度 ${cookie.length}` : '未捕获'}`);
 
@@ -77,6 +79,7 @@ async function main() {
     referer: BASE,
   });
   log(`首页：HTTP ${portal.statusCode}`);
+  cookie = mergeResponseCookieToStore(cookie, portal.headers, '首页');
   if (isSecurityCheck(portal.body)) return finish(`首页：触发${securityCheckHint(portal.body)}，请先用 Safari 完成安全验证后刷新页面`);
   if (!isLoggedIn(portal.body, cookie)) return finish('首页：未识别到登录状态，Cookie 可能失效');
 
@@ -99,6 +102,7 @@ async function main() {
     referer: PORTAL,
   });
   log(`签到：HTTP ${sign.statusCode}`);
+  cookie = mergeResponseCookieToStore(cookie, sign.headers, '签到');
   const signResult = explainSign(sign.body, sign.statusCode);
   log(signResult);
 
@@ -165,6 +169,7 @@ async function queryCredit(cookie, userAgent) {
     userAgent,
     referer: HOME,
   });
+  mergeResponseCookieToStore(cookie, res.headers, '积分页');
   if (isSecurityCheck(res.body)) return `积分页：触发${securityCheckHint(res.body)}，请先过安全验证`;
   if (res.statusCode >= 400) return `积分页：失败 HTTP ${res.statusCode}`;
 
@@ -284,6 +289,19 @@ function getHeader(headers, name) {
   const target = name.toLowerCase();
   const key = Object.keys(headers || {}).find((item) => item.toLowerCase() === target);
   return key ? headers[key] : '';
+}
+
+function mergeResponseCookieToStore(oldCookie, headers, scene) {
+  const setCookie = getHeader(headers, 'Set-Cookie') || getHeader(headers, 'set-cookie');
+  if (!setCookie) return oldCookie;
+
+  const merged = mergeCookie(oldCookie, setCookie);
+  if (!merged || merged === oldCookie) return oldCookie;
+
+  write('PJ52_COOKIE', merged);
+  const added = diffCookieNames(oldCookie, merged);
+  log(`${scene}：已合并响应 Cookie 字段 ${added.join(', ') || '未识别'}，长度 ${merged.length}`);
+  return merged;
 }
 
 function mergeCookie(oldCookie, setCookie) {
