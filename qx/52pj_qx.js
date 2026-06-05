@@ -1,0 +1,301 @@
+/*
+ * 吾爱破解 QX 手机自动化
+ *
+ * 用途：
+ *   1. Quantumult X 重写模式下自动捕获 52pojie Cookie / User-Agent。
+ *   2. Quantumult X 定时任务里直接执行吾爱破解签到，并尝试查询积分概况。
+ *
+ * QX 配置示例：
+ *   [rewrite_local]
+ *   ^https:\/\/www\.52pojie\.cn\/(?:home\.php|portal\.php) url script-request-header 52pj_qx.js
+ *
+ *   [task_local]
+ *   16 8 * * * 52pj_qx.js, tag=吾爱破解签到, enabled=true
+ *
+ *   [mitm]
+ *   hostname = www.52pojie.cn
+ *
+ * 注意：
+ *   - 脚本不会打印 Cookie 明文，只保存到 QX 本地 $prefs。
+ *   - 吾爱破解有 WAF/安全验证；手机 QX 可以减少青龙容器环境不一致的问题，但仍可能需要先用 Safari 手动过验证。
+ */
+
+const NAME = '吾爱破解签到';
+const VERSION = 'QX-v1';
+const BASE = 'https://www.52pojie.cn';
+const PORTAL = `${BASE}/portal.php`;
+const HOME = `${BASE}/home.php`;
+const SIGN_URL = `${BASE}/home.php?mod=task&do=apply&id=2&referer=%2Fportal.php`;
+const CREDIT_URL = `${BASE}/home.php?mod=spacecp&ac=credit&showcredit=1`;
+const DEFAULT_UA =
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
+const CAPTURE_NOTIFY_INTERVAL = 6 * 60 * 60 * 1000;
+
+main().catch((error) => {
+  log(`异常：${formatError(error)}`);
+  notify(NAME, '运行异常', formatError(error));
+  done();
+});
+
+async function main() {
+  log(`==== ${NAME} | ${VERSION} ====`);
+  if (typeof $request !== 'undefined') {
+    log('模式：请求头捕获');
+    captureFromRequest();
+    done();
+    return;
+  }
+
+  log('模式：定时签到');
+  const cookie = read('PJ52_COOKIE');
+  const userAgent = read('PJ52_USER_AGENT') || DEFAULT_UA;
+  log(`Cookie 状态：${cookie ? `已捕获，长度 ${cookie.length}` : '未捕获'}`);
+
+  if (!cookie) {
+    const msg = '请先开启 QX 重写和 MITM，用 Safari 登录并访问 https://www.52pojie.cn/home.php';
+    log(`未捕获 Cookie：${msg}`);
+    notify(NAME, '未捕获 Cookie', msg);
+    done();
+    return;
+  }
+
+  const hints = cookieHints(cookie);
+  if (hints.length) log(`Cookie 提醒：${hints.join('，')}`);
+
+  const portal = await fetchText(PORTAL, {
+    method: 'GET',
+    cookie,
+    userAgent,
+    referer: BASE,
+  });
+  log(`首页：HTTP ${portal.statusCode}`);
+  if (isSecurityCheck(portal.body)) return finish(`首页：触发${securityCheckHint(portal.body)}，请先用 Safari 完成安全验证后刷新页面`);
+  if (!isLoggedIn(portal.body, cookie)) return finish('首页：未识别到登录状态，Cookie 可能失效');
+
+  const portalStatus = getPortalSignStatus(portal.body);
+  if (portalStatus === 'already') {
+    log('签到：首页显示今日已签到，跳过任务入口');
+    const creditResult = await queryCredit(cookie, userAgent);
+    log(creditResult);
+    notify(NAME, '运行完成', ['签到：今日已签到', creditResult].join('\n'));
+    done();
+    return;
+  }
+
+  const signUrl = findSignUrl(portal.body) || SIGN_URL;
+  log(`签到入口：${shortUrl(signUrl)}`);
+  const sign = await fetchText(signUrl, {
+    method: 'GET',
+    cookie,
+    userAgent,
+    referer: PORTAL,
+  });
+  log(`签到：HTTP ${sign.statusCode}`);
+  const signResult = explainSign(sign.body, sign.statusCode);
+  log(signResult);
+
+  const creditResult = await queryCredit(cookie, userAgent);
+  log(creditResult);
+
+  notify(NAME, '运行完成', [signResult, creditResult].join('\n'));
+  done();
+}
+
+function captureFromRequest() {
+  const headers = $request.headers || {};
+  const cookie = getHeader(headers, 'Cookie');
+  const userAgent = getHeader(headers, 'User-Agent') || DEFAULT_UA;
+  if (!cookie) {
+    log('未发现 Cookie 请求头');
+    return;
+  }
+
+  const oldCookie = read('PJ52_COOKIE');
+  write('PJ52_COOKIE', cookie);
+  write('PJ52_USER_AGENT', userAgent);
+
+  const fields = cookie
+    .split(';')
+    .map((item) => item.trim().split('=')[0])
+    .filter(Boolean);
+  const changed = oldCookie && oldCookie !== cookie ? '已更新' : '已保存';
+  const msg = `字段：${fields.join(', ')}\n长度：${cookie.length}`;
+  log(`${changed}登录态：${msg.replace(/\n/g, '；')}`);
+  if (shouldNotifyCapture('PJ52_CAPTURE_NOTIFY_AT', oldCookie, cookie)) {
+    notify(NAME, `${changed}登录态`, msg);
+  }
+}
+
+async function queryCredit(cookie, userAgent) {
+  const res = await fetchText(CREDIT_URL, {
+    method: 'GET',
+    cookie,
+    userAgent,
+    referer: HOME,
+  });
+  if (isSecurityCheck(res.body)) return `积分页：触发${securityCheckHint(res.body)}，请先过安全验证`;
+  if (res.statusCode >= 400) return `积分页：失败 HTTP ${res.statusCode}`;
+
+  const text = stripHtml(res.body);
+  const balances = [];
+  const patterns = [
+    /(吾爱币|热心值|技术值|贡献值|威望|违规|积分)[:：]?\s*(-?\d+)/g,
+    /(吾爱币|热心值|技术值|贡献值|威望|违规|积分)\s*<\/em>\s*<span[^>]*>\s*(-?\d+)/g,
+  ];
+  patterns.forEach((pattern) => {
+    for (const match of res.body.matchAll(pattern)) {
+      const item = `${match[1]} ${match[2]}`;
+      if (!balances.includes(item)) balances.push(item);
+    }
+  });
+  if (!balances.length) {
+    for (const match of text.matchAll(/(吾爱币|热心值|技术值|贡献值|威望|违规|积分)[:：]?\s*(-?\d+)/g)) {
+      const item = `${match[1]} ${match[2]}`;
+      if (!balances.includes(item)) balances.push(item);
+    }
+  }
+  return balances.length ? `积分概况：${balances.slice(0, 8).join('；')}` : '积分概况：未解析到余额，请以页面为准';
+}
+
+function fetchText(url, options) {
+  return $task.fetch({
+    url,
+    method: options.method || 'GET',
+    headers: {
+      'User-Agent': options.userAgent || DEFAULT_UA,
+      Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+      'Accept-Language': 'zh-CN,zh;q=0.9',
+      Referer: options.referer || BASE,
+      Cookie: options.cookie || '',
+    },
+  }).then((response) => ({
+    statusCode: Number(response.statusCode || response.status || 0),
+    body: response.body || '',
+    headers: response.headers || {},
+  }));
+}
+
+function explainSign(html, statusCode) {
+  if (isSecurityCheck(html)) return `签到：触发${securityCheckHint(html)}，请先用 Safari 完成安全验证后刷新页面`;
+  const text = stripHtml(html);
+  if (/已完成|已签到|今日已签|下期再来|您已|ÄúÒÑ/i.test(text) || /ÄúÒÑ|ÏÂÆÚÔÙÀ´/i.test(html)) return '签到：今日已签到';
+  if (/签到成功|打卡成功|恭喜|获得|吾爱币|热心值|\u606d\u559c\u60a8/i.test(text)) return `签到：成功，${text.slice(0, 100)}`;
+  if (/需要先登录|请先登录|登录|ÏÈµÇÂ¼/i.test(text)) return '签到：失败，Cookie 可能失效';
+  if (statusCode === 403) return '签到：失败 HTTP 403，可能被 WAF 或权限拦截';
+  if (statusCode >= 400) return `签到：失败 HTTP ${statusCode}`;
+  return `签到：未识别结果，${text.slice(0, 100)}`;
+}
+
+function findSignUrl(html) {
+  const patterns = [
+    /href=["']([^"']*home\.php\?mod=task&do=apply&id=2[^"']*)["']/i,
+    /href=["']([^"']*(?:qiandao|sign|plugin\.php\?id=dsu_paulsign|home\.php\?mod=task)[^"']*)["']/i,
+  ];
+  for (const pattern of patterns) {
+    const match = html.match(pattern);
+    if (match) return new URL(match[1].replace(/&amp;/g, '&'), BASE).href;
+  }
+  return '';
+}
+
+function getPortalSignStatus(html) {
+  const text = stripHtml(html);
+  if (/今日已签到|已签到|今日已签|已完成|下期再来|wbs\.png/.test(html) || /今日已签到|已签到|今日已签|已完成|下期再来/.test(text)) {
+    return 'already';
+  }
+  return 'unknown';
+}
+
+function isSecurityCheck(html) {
+  return /waf_zw_verify|WZWS_CONFIRM_PREFIX_LABEL|Please enable JavaScript|slidercaptcha|请完成安全验证|安全检查中|安全验证|wzws/i.test(html || '');
+}
+
+function securityCheckHint(html) {
+  if (/slidercaptcha|请完成安全验证/i.test(html)) return '滑块安全验证';
+  if (/waf_zw_verify|WZWS_CONFIRM_PREFIX_LABEL|Please enable JavaScript|wzws/i.test(html)) return 'JS/WAF 安全验证';
+  return '安全验证';
+}
+
+function isLoggedIn(html, cookie) {
+  const text = stripHtml(html);
+  if (/退出|消息|提醒|积分|我的/.test(text) || /member\.php\?mod=logging(?:&amp;|&)action=logout/.test(html)) return true;
+  if (/登录|立即登录|用户名|密码/.test(text.slice(0, 1500))) return false;
+  return /_2132_auth=/.test(cookie || '');
+}
+
+function cookieHints(cookie) {
+  const hints = [];
+  if (!/_2132_auth=/.test(cookie)) hints.push('缺少 _2132_auth');
+  if (!/_2132_saltkey=/.test(cookie)) hints.push('缺少 _2132_saltkey');
+  if (!/wzws_cid=/.test(cookie)) hints.push('缺少 wzws_cid，可能无法通过安全验证');
+  if (/wzws_cid=/.test(cookie) && !/wzws_sid=/.test(cookie)) hints.push('有 wzws_cid 但缺少 wzws_sid，可能还没完整通过 WAF');
+  return hints;
+}
+
+function stripHtml(html) {
+  return String(html || '')
+    .replace(/<script[\s\S]*?<\/script>/gi, ' ')
+    .replace(/<style[\s\S]*?<\/style>/gi, ' ')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function shortUrl(url) {
+  const target = new URL(url, BASE);
+  return `${target.pathname}${target.search}`;
+}
+
+function getHeader(headers, name) {
+  const target = name.toLowerCase();
+  const key = Object.keys(headers || {}).find((item) => item.toLowerCase() === target);
+  return key ? headers[key] : '';
+}
+
+function read(key) {
+  if (typeof $prefs !== 'undefined') return $prefs.valueForKey(key) || '';
+  return '';
+}
+
+function write(key, value) {
+  if (typeof $prefs !== 'undefined') $prefs.setValueForKey(value, key);
+}
+
+function shouldNotifyCapture(timeKey, oldCookie, newCookie) {
+  if (!oldCookie || oldCookie !== newCookie) {
+    write(timeKey, String(Date.now()));
+    return true;
+  }
+  const last = Number(read(timeKey) || 0);
+  if (!last || Date.now() - last > CAPTURE_NOTIFY_INTERVAL) {
+    write(timeKey, String(Date.now()));
+    return true;
+  }
+  return false;
+}
+
+function notify(title, subtitle, message) {
+  if (typeof $notify !== 'undefined') $notify(title, subtitle, message);
+  else console.log([title, subtitle, message].filter(Boolean).join('\n'));
+}
+
+function log(message) {
+  console.log(String(message));
+}
+
+function done(value) {
+  if (typeof $done !== 'undefined') $done(value || {});
+}
+
+function finish(message) {
+  log(message);
+  notify(NAME, '需处理', message);
+  done();
+}
+
+function formatError(error) {
+  if (!error) return '未知错误';
+  return [error.name, error.message].filter(Boolean).join(' ') || String(error);
+}
