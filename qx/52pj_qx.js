@@ -8,6 +8,7 @@
  * QX 配置示例：
  *   [rewrite_local]
  *   ^https:\/\/www\.52pojie\.cn\/portal\.php(?:$|\?) url script-request-header https://raw.githubusercontent.com/xixingchao/qx-scripts/main/qx/52pj_qx.js
+ *   ^https:\/\/www\.52pojie\.cn\/portal\.php(?:$|\?) url script-response-header https://raw.githubusercontent.com/xixingchao/qx-scripts/main/qx/52pj_qx.js
  *
  *   [task_local]
  *   16 8 * * * 52pj_qx.js, tag=吾爱破解签到, enabled=true
@@ -39,6 +40,13 @@ main().catch((error) => {
 
 async function main() {
   log(`==== ${NAME} | ${VERSION} ====`);
+  if (typeof $response !== 'undefined') {
+    log('模式：响应头捕获');
+    captureFromResponse();
+    done();
+    return;
+  }
+
   if (typeof $request !== 'undefined') {
     log('模式：请求头捕获');
     captureFromRequest();
@@ -123,6 +131,30 @@ function captureFromRequest() {
   log(`${changed}登录态：${msg.replace(/\n/g, '；')}`);
   if (shouldNotifyCapture('PJ52_CAPTURE_NOTIFY_AT', oldCookie, cookie)) {
     notify(NAME, `${changed}登录态`, msg);
+  }
+}
+
+function captureFromResponse() {
+  const headers = $response.headers || {};
+  const setCookie = getHeader(headers, 'Set-Cookie') || getHeader(headers, 'set-cookie');
+  if (!setCookie) {
+    log('响应头未发现 Set-Cookie');
+    return;
+  }
+
+  const oldCookie = read('PJ52_COOKIE');
+  const merged = mergeCookie(oldCookie, setCookie);
+  if (!merged || merged === oldCookie) {
+    log('响应头 Cookie 无新增字段');
+    return;
+  }
+
+  write('PJ52_COOKIE', merged);
+  const added = diffCookieNames(oldCookie, merged);
+  const msg = `新增字段：${added.join(', ') || '未识别'}\n长度：${merged.length}`;
+  log(`已合并响应登录态：${msg.replace(/\n/g, '；')}`);
+  if (shouldNotifyCapture('PJ52_CAPTURE_NOTIFY_AT', oldCookie, merged)) {
+    notify(NAME, '已合并响应登录态', msg);
   }
 }
 
@@ -252,6 +284,42 @@ function getHeader(headers, name) {
   const target = name.toLowerCase();
   const key = Object.keys(headers || {}).find((item) => item.toLowerCase() === target);
   return key ? headers[key] : '';
+}
+
+function mergeCookie(oldCookie, setCookie) {
+  const jar = parseCookiePairs(oldCookie);
+  const lines = Array.isArray(setCookie) ? setCookie : String(setCookie || '').split(/,(?=\s*[^;,=\s]+=[^;,]*)/);
+  lines.forEach((line) => {
+    const first = String(line || '').split(';')[0].trim();
+    const index = first.indexOf('=');
+    if (index <= 0) return;
+    const name = first.slice(0, index).trim();
+    const value = first.slice(index + 1).trim();
+    if (!name || !value) return;
+    jar[name] = value;
+  });
+  return Object.keys(jar)
+    .map((name) => `${name}=${jar[name]}`)
+    .join('; ');
+}
+
+function parseCookiePairs(cookie) {
+  const jar = {};
+  String(cookie || '')
+    .split(';')
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .forEach((item) => {
+      const index = item.indexOf('=');
+      if (index <= 0) return;
+      jar[item.slice(0, index).trim()] = item.slice(index + 1).trim();
+    });
+  return jar;
+}
+
+function diffCookieNames(oldCookie, newCookie) {
+  const oldNames = new Set(Object.keys(parseCookiePairs(oldCookie)));
+  return Object.keys(parseCookiePairs(newCookie)).filter((name) => !oldNames.has(name));
 }
 
 function read(key) {
