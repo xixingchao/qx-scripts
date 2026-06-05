@@ -18,11 +18,6 @@ https://raw.githubusercontent.com/<user>/<repo>/main/qx/nodeseek_qx_rewrite.conf
 https://raw.githubusercontent.com/<user>/<repo>/main/qx/52pj_qx_rewrite.conf
 ```
 
-The JavaScript files must also be available to Quantumult X with the same names used in the rewrite files:
-
-```text
-nodeseek_qx.js
-52pj_qx.js
-```
+The rewrite resources reference the JavaScript files by GitHub Raw URL, so Quantumult X can fetch the scripts directly.
 
 Cookies and tokens are stored locally in Quantumult X `$prefs`; do not commit captured cookies or secrets.
