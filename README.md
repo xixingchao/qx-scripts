@@ -14,6 +14,7 @@ Quantumult X scripts and rewrite resources for personal sign-in automation.
 Add the rewrite resources from GitHub Raw URL:
 
 ```text
+https://raw.githubusercontent.com/<user>/<repo>/main/qx/all_rewrite.conf
 https://raw.githubusercontent.com/<user>/<repo>/main/qx/nodeseek_qx_rewrite.conf
 https://raw.githubusercontent.com/<user>/<repo>/main/qx/52pj_qx_rewrite.conf
 ```
