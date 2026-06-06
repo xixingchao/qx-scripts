@@ -7,10 +7,10 @@
  *
  * QX 配置示例：
  *   [rewrite_local]
- *   ^https:\/\/www\.52pojie\.cn\/portal\.php(?:$|\?) url script-request-header https://raw.githubusercontent.com/xixingchao/qx-scripts/main/qx/52pj_qx.js
- *   ^https:\/\/www\.52pojie\.cn\/portal\.php(?:$|\?) url script-response-header https://raw.githubusercontent.com/xixingchao/qx-scripts/main/qx/52pj_qx.js
- *   ^https:\/\/www\.52pojie\.cn\/home\.php\?mod=task(?:&|$) url script-request-header https://raw.githubusercontent.com/xixingchao/qx-scripts/main/qx/52pj_qx.js
- *   ^https:\/\/www\.52pojie\.cn\/home\.php\?mod=task(?:&|$) url script-response-header https://raw.githubusercontent.com/xixingchao/qx-scripts/main/qx/52pj_qx.js
+ *   ^https:\/\/www\.52pojie\.cn\/portal\.php(?:$|\?) url script-request-header https://raw.githubusercontent.com/xixingchao/qx-scripts/main/qx/52pj_qx.js?v=20260606b
+ *   ^https:\/\/www\.52pojie\.cn\/portal\.php(?:$|\?) url script-response-header https://raw.githubusercontent.com/xixingchao/qx-scripts/main/qx/52pj_qx.js?v=20260606b
+ *   ^https:\/\/www\.52pojie\.cn\/home\.php\?mod=task(?:&|$) url script-request-header https://raw.githubusercontent.com/xixingchao/qx-scripts/main/qx/52pj_qx.js?v=20260606b
+ *   ^https:\/\/www\.52pojie\.cn\/home\.php\?mod=task(?:&|$) url script-response-header https://raw.githubusercontent.com/xixingchao/qx-scripts/main/qx/52pj_qx.js?v=20260606b
  *
  *   [task_local]
  *   16 8 * * * 52pj_qx.js, tag=吾爱破解签到, enabled=true
@@ -24,7 +24,7 @@
  */
 
 const NAME = '吾爱破解签到';
-const VERSION = 'QX-v1';
+const VERSION = 'QX-v2-waf-20260606';
 const BASE = 'https://www.52pojie.cn';
 const PORTAL = `${BASE}/portal.php`;
 const HOME = `${BASE}/home.php`;
