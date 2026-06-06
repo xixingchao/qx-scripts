@@ -30,6 +30,7 @@ const PORTAL = `${BASE}/portal.php`;
 const HOME = `${BASE}/home.php`;
 const SIGN_URL = `${BASE}/home.php?mod=task&do=apply&id=2&referer=%2Fportal.php`;
 const CREDIT_URL = `${BASE}/home.php?mod=spacecp&ac=credit&showcredit=1`;
+const WAF_VERIFY_URL = `${BASE}/waf_zw_verify`;
 const DEFAULT_UA =
   'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
 const CAPTURE_NOTIFY_INTERVAL = 6 * 60 * 60 * 1000;
@@ -72,7 +73,7 @@ async function main() {
   const hints = cookieHints(cookie);
   if (hints.length) log(`Cookie 提醒：${hints.join('，')}`);
 
-  const portal = await fetchText(PORTAL, {
+  let portal = await fetchText(PORTAL, {
     method: 'GET',
     cookie,
     userAgent,
@@ -80,7 +81,13 @@ async function main() {
   });
   log(`首页：HTTP ${portal.statusCode}`);
   cookie = mergeResponseCookieToStore(cookie, portal.headers, '首页');
-  if (isSecurityCheck(portal.body)) return finish(`首页：触发${securityCheckHint(portal.body)}，请先用 Safari 完成安全验证后刷新页面`);
+  if (isSecurityCheck(portal.body)) {
+    const waf = await tryOldWafChallenge(PORTAL, portal.body, cookie, userAgent, BASE, '首页');
+    cookie = waf.cookie;
+    if (!waf.ok) return finish(`首页：触发${securityCheckHint(portal.body)}，${waf.message}`);
+    portal = waf.response;
+    if (isSecurityCheck(portal.body)) return finish(`首页：自动验证后仍触发${securityCheckHint(portal.body)}，请先用 Safari 完成安全验证后刷新页面`);
+  }
   if (!isLoggedIn(portal.body, cookie)) return finish('首页：未识别到登录状态，Cookie 可能失效');
 
   const portalStatus = getPortalSignStatus(portal.body);
@@ -95,7 +102,7 @@ async function main() {
 
   const signUrl = findSignUrl(portal.body) || SIGN_URL;
   log(`签到入口：${shortUrl(signUrl)}`);
-  const sign = await fetchText(signUrl, {
+  let sign = await fetchText(signUrl, {
     method: 'GET',
     cookie,
     userAgent,
@@ -103,6 +110,12 @@ async function main() {
   });
   log(`签到：HTTP ${sign.statusCode}`);
   cookie = mergeResponseCookieToStore(cookie, sign.headers, '签到');
+  if (isSecurityCheck(sign.body)) {
+    const waf = await tryOldWafChallenge(signUrl, sign.body, cookie, userAgent, PORTAL, '签到');
+    cookie = waf.cookie;
+    if (waf.ok) sign = waf.response;
+    else log(`签到：自动 WAF 未通过，${waf.message}`);
+  }
   const signResult = explainSign(sign.body, sign.statusCode);
   log(signResult);
 
@@ -195,16 +208,20 @@ async function queryCredit(cookie, userAgent) {
 }
 
 function fetchText(url, options) {
+  const headers = {
+    'User-Agent': options.userAgent || DEFAULT_UA,
+    Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    'Accept-Language': 'zh-CN,zh;q=0.9',
+    Referer: options.referer || BASE,
+    Cookie: options.cookie || '',
+  };
+  if (options.contentType) headers['Content-Type'] = options.contentType;
+
   return $task.fetch({
     url,
     method: options.method || 'GET',
-    headers: {
-      'User-Agent': options.userAgent || DEFAULT_UA,
-      Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
-      'Accept-Language': 'zh-CN,zh;q=0.9',
-      Referer: options.referer || BASE,
-      Cookie: options.cookie || '',
-    },
+    headers,
+    body: options.body,
   }).then((response) => ({
     statusCode: Number(response.statusCode || response.status || 0),
     body: response.body || '',
@@ -221,6 +238,174 @@ function explainSign(html, statusCode) {
   if (statusCode === 403) return '签到：失败 HTTP 403，可能被 WAF 或权限拦截';
   if (statusCode >= 400) return `签到：失败 HTTP ${statusCode}`;
   return `签到：未识别结果，${text.slice(0, 100)}`;
+}
+
+async function tryOldWafChallenge(targetUrl, html, cookie, userAgent, referer, scene) {
+  const params = extractOldWafParams(html);
+  if (!params) {
+    return {
+      ok: false,
+      cookie,
+      message: '未识别旧版 WAF 参数，可能是新版动态验证；请用 Safari 完成安全验证后刷新页面',
+    };
+  }
+
+  log(`${scene}：识别到旧版 WAF 参数，尝试自动验证`);
+  const payload = buildOldWafPayload(params, userAgent);
+  const verify = await fetchText(WAF_VERIFY_URL, {
+    method: 'POST',
+    cookie,
+    userAgent,
+    referer: targetUrl,
+    body: payload,
+    contentType: 'text/plain;charset=UTF-8',
+  });
+  log(`${scene}：WAF 验证 HTTP ${verify.statusCode}`);
+  cookie = mergeResponseCookieToStore(cookie, verify.headers, `${scene}验证`);
+
+  const retry = await fetchText(targetUrl, {
+    method: 'GET',
+    cookie,
+    userAgent,
+    referer,
+  });
+  log(`${scene}：验证后重试 HTTP ${retry.statusCode}`);
+  cookie = mergeResponseCookieToStore(cookie, retry.headers, `${scene}重试`);
+  return {
+    ok: retry.statusCode > 0 && !isSecurityCheck(retry.body),
+    cookie,
+    response: retry,
+    message: '旧版 WAF 自动验证未通过，请用 Safari 完成安全验证后刷新页面',
+  };
+}
+
+function extractOldWafParams(html) {
+  const text = String(html || '');
+  const numberPatterns = [
+    /\bLZ\s*=\s*['"]([0-9]{4,})['"]\s*,\s*LJ\s*=\s*['"]?([0-9]{4,})['"]?/s,
+    /\bLZ\s*=\s*['"]([0-9]{4,})['"][\s\S]{0,160}?\bLJ\s*=\s*['"]?([0-9]{4,})['"]?/s,
+  ];
+  let numbers = null;
+  for (const pattern of numberPatterns) {
+    numbers = text.match(pattern);
+    if (numbers) break;
+  }
+  if (!numbers) return null;
+
+  const encryptionPatterns = [
+    /\bLE\s*=\s*['"]([a-zA-Z0-9/+]{40,}={0,2})['"]/s,
+    /['"]([a-zA-Z0-9/+]{40,}={0,2})['"]/s,
+  ];
+  let encryption = null;
+  for (const pattern of encryptionPatterns) {
+    encryption = text.match(pattern);
+    if (encryption) break;
+  }
+  if (!encryption) return null;
+  return { lz: numbers[1], lj: numbers[2], le: encryption[1] };
+}
+
+function buildOldWafPayload(params, userAgent) {
+  const encodeData = {
+    fp_infos: fpInfoGenerate([
+      {
+        key: 'plugins',
+        value: {
+          details: [
+            { name: 'PDF Viewer', description: 'Portable Document Format', filename: 'internal-pdf-viewer', mimetypes: [{ type: 'application/pdf', suffixes: 'pdf' }] },
+            { name: 'WebKit built-in PDF', description: 'Portable Document Format', filename: 'internal-pdf-viewer', mimetypes: [{ type: 'application/pdf', suffixes: 'pdf' }] },
+          ],
+          names: ['PDF Viewer', 'WebKit built-in PDF'],
+          fp: '9772d5556d57fcc8177f76029bfd92ef',
+        },
+      },
+      { key: 'fonts', value: { names: ['Arial', 'Helvetica', 'Times New Roman'], fp: 'f730c0cc627b3b3d7db9f459836db692' } },
+      { key: 'screenObject', value: { screenResolution: [390, 844], availableScreenResolution: [390, 844], colorDepth: 24, pixelDepth: 24, top: 0, left: 0, orientation: { angle: 0, type: 'portrait-primary' } } },
+      { key: 'intlObject', value: { locale: 'zh-Hans-CN', calendar: 'gregory', numberingSystem: 'latn', timeZone: 'Asia/Shanghai', year: 'numeric', month: 'numeric', day: 'numeric', timezoneOffset: -480 } },
+      { key: 'touchSupport', value: [5, true, true] },
+      { key: 'audio', value: '35.749968223273754' },
+      { key: 'webdriver', value: false },
+      { key: 'webGL', value: { webgl_version: 'WebGL 1.0', webgl_vendor_and_renderer: 'Apple Inc.~Apple GPU', webgl_unmasked_renderer: 'Apple GPU', webgl_unmasked_vendor: 'Apple Inc.', webgl_aliased_point_size_range: [1, 1024], webgl_fragment_shader_medium_int_precision_rangeMax: 30, webgl_fragment_shader_medium_int_precision_rangeMin: 31, fp: '9631a557b3fdf1c28cfbd6500ad35bc8' } },
+      { key: 'canvas', value: { canvas_winding: true, fp: 'da766c3ea7221c96d06cf280d3a4e60a' } },
+      { key: 'deviceInfos', value: { deviceMemory: undefined, hardwareConcurrency: 4 } },
+      { key: 'storageObject', value: { localStorage: true, openDatabase: false, indexedDb: true, sessionStorage: true, addBehavior: false } },
+      { key: 'navigatorObject', value: { userAgent, platform: 'iPhone', vendor: 'Apple Computer, Inc.', language: 'zh-CN', languages: ['zh-CN', 'zh', 'en-US', 'en'], productSub: '20030107' } },
+      { key: 'functions', value: { eval_tostring_length: 37 } },
+    ]),
+    answer: answerGenerate(params.lz, params.lj),
+    hostname: 'www.52pojie.cn',
+    scheme: 'https',
+  };
+  return encodeBody(JSON.stringify(encodeData), params.le);
+}
+
+function fpInfoGenerate(items) {
+  const output = { errors: {} };
+  items.forEach((item) => {
+    const value = item.value;
+    if (typeof value === 'string' && value.indexOf('Error: ') !== -1) output.errors[item.key] = value;
+    else output[item.key] = value;
+  });
+  const now = new Date();
+  output.dateTime = { timestamp: now.getTime() };
+  output.fp = 'bd5db91d97ce71f00bf0b3eb63790c74';
+  output.protocol = 'https';
+  setVerify(output);
+  return output;
+}
+
+function setVerify(target) {
+  const multiplier = target.dateTime.timestamp % 10 || 10;
+  Object.keys(target).forEach((key) => {
+    const value = target[key];
+    if (!value || typeof value !== 'object') return;
+    let total = 0;
+    Object.keys(value).forEach((childKey) => {
+      const child = value[childKey];
+      if (typeof child === 'number') total += parseInt(child, 10);
+      else if (typeof child === 'string') total += child.length;
+      else total += multiplier;
+    });
+    if (total) value.verify = total * multiplier;
+  });
+}
+
+function answerGenerate(lz, lj) {
+  let answer = 0;
+  let offset = 1;
+  for (let index = 0; index < lz.length; index += 1) {
+    answer = 2 * (answer + lz.charCodeAt(index));
+    offset = 2 * (offset + index + 1);
+  }
+  return `WZWS_CONFIRM_PREFIX_LABEL${answer * Number(lj) + offset}`;
+}
+
+function encodeBody(text, alphabet) {
+  let output = '';
+  let index = 0;
+  while (index < text.length) {
+    const first = text.charCodeAt(index++) & 255;
+    if (index === text.length) {
+      output += alphabet.charAt(first >> 2);
+      output += alphabet.charAt((first & 3) << 4);
+      output += '==';
+      break;
+    }
+    const second = text.charCodeAt(index++);
+    if (index === text.length) {
+      output += alphabet.charAt(first >> 2);
+      output += alphabet.charAt(((first & 3) << 4) | ((second & 240) >> 4));
+      output += alphabet.charAt((second & 15) << 2);
+      output += '=';
+      break;
+    }
+    const third = text.charCodeAt(index++);
+    output += alphabet.charAt(first >> 2);
+    output += alphabet.charAt(((first & 3) << 4) | ((second & 240) >> 4));
+    output += alphabet.charAt(((second & 15) << 2) | ((third & 192) >> 6));
+    output += alphabet.charAt(third & 63);
+  }
+  return output;
 }
 
 function findSignUrl(html) {
