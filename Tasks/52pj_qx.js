@@ -7,11 +7,11 @@
  *
  * QX 配置示例：
  *   [rewrite_local]
- *   ^https:\/\/www\.52pojie\.cn\/ url script-request-header https://raw.githubusercontent.com/xixingchao/qx-scripts/master/qx/52pj_qx.js?v=20260607h
- *   ^https:\/\/www\.52pojie\.cn\/ url script-response-header https://raw.githubusercontent.com/xixingchao/qx-scripts/master/qx/52pj_qx.js?v=20260607h
+ *   ^https:\/\/www\.52pojie\.cn\/ url script-request-header https://raw.githubusercontent.com/xixingchao/qx-scripts/master/qx/52pj_qx.js?v=20260607m
+ *   ^https:\/\/www\.52pojie\.cn\/ url script-response-header https://raw.githubusercontent.com/xixingchao/qx-scripts/master/qx/52pj_qx.js?v=20260607m
  *
  *   [task_local]
- *   16 8 * * * https://raw.githubusercontent.com/xixingchao/qx-scripts/master/qx/52pj_qx.js?v=20260607h, tag=吾爱破解签到, enabled=true
+ *   16 8 * * * https://raw.githubusercontent.com/xixingchao/qx-scripts/master/qx/52pj_qx.js?v=20260607m, tag=吾爱破解签到, enabled=true
  *
  *   [mitm]
  *   hostname = www.52pojie.cn
@@ -22,7 +22,7 @@
  */
 
 const NAME = '吾爱破解签到';
-const VERSION = 'QX-v2-waf-20260607h';
+const VERSION = 'QX-v2-waf-20260607m';
 const BASE = 'https://www.52pojie.cn';
 const PORTAL = `${BASE}/portal.php`;
 const HOME = `${BASE}/home.php`;
@@ -32,6 +32,7 @@ const WAF_VERIFY_URL = `${BASE}/waf_zw_verify`;
 const DEFAULT_UA =
   'Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.0 Mobile/15E148 Safari/604.1';
 const CAPTURE_NOTIFY_INTERVAL = 6 * 60 * 60 * 1000;
+const CAPTURE_STALE_WARN_MS = 3 * 24 * 60 * 60 * 1000;
 
 main().catch((error) => {
   log(`异常：${formatError(error)}`);
@@ -58,7 +59,9 @@ async function main() {
   log('模式：定时签到');
   let cookie = read('PJ52_COOKIE');
   const userAgent = read('PJ52_USER_AGENT') || DEFAULT_UA;
+  const browserReferer = safeSameOriginUrl(read('PJ52_LAST_URL')) || PORTAL;
   log(`Cookie 状态：${cookie ? `已捕获，长度 ${cookie.length}` : '未捕获'}`);
+  logCaptureState();
 
   if (!cookie) {
     const msg = '请先开启 QX 重写和 MITM，用 Safari 登录并访问 https://www.52pojie.cn/portal.php';
@@ -75,7 +78,7 @@ async function main() {
     method: 'GET',
     cookie,
     userAgent,
-    referer: BASE,
+    referer: browserReferer,
   });
   log(`首页：HTTP ${portal.statusCode}`);
   const portalCookieBeforeMerge = cookie;
@@ -86,7 +89,7 @@ async function main() {
         method: 'GET',
         cookie,
         userAgent,
-        referer: BASE,
+        referer: browserReferer,
       });
       log(`首页：合并新 Cookie 后重试 HTTP ${portal.statusCode}`);
       cookie = mergeResponseCookieToStore(cookie, portal.headers, '首页重试');
@@ -106,6 +109,7 @@ async function main() {
     log('签到：首页显示今日已签到，跳过任务入口');
     const creditResult = await queryCredit(cookie, userAgent);
     log(creditResult);
+    recordRunState('今日已签到', creditResult);
     notify(NAME, '运行完成', ['签到：今日已签到', creditResult].join('\n'));
     done();
     return;
@@ -117,7 +121,7 @@ async function main() {
     method: 'GET',
     cookie,
     userAgent,
-    referer: PORTAL,
+    referer: browserReferer,
   });
   log(`签到：HTTP ${sign.statusCode}`);
   const signCookieBeforeMerge = cookie;
@@ -128,14 +132,14 @@ async function main() {
         method: 'GET',
         cookie,
         userAgent,
-        referer: PORTAL,
+        referer: browserReferer,
       });
       log(`签到：合并新 Cookie 后重试 HTTP ${sign.statusCode}`);
       cookie = mergeResponseCookieToStore(cookie, sign.headers, '签到重试');
     }
   }
   if (isSecurityCheck(sign.body)) {
-    const waf = await tryOldWafChallenge(signUrl, sign.body, cookie, userAgent, PORTAL, '签到');
+    const waf = await tryOldWafChallenge(signUrl, sign.body, cookie, userAgent, browserReferer, '签到');
     cookie = waf.cookie;
     if (waf.ok) sign = waf.response;
     else return finish(`签到：触发${securityCheckHint(sign.body)}，${wafRefreshMessage(cookie)}`);
@@ -152,31 +156,41 @@ async function main() {
 
   const creditResult = await queryCredit(cookie, userAgent);
   log(creditResult);
+  recordRunState(signResult, creditResult);
 
   notify(NAME, '运行完成', [signResult, creditResult].join('\n'));
   done();
 }
 
 async function followTaskRedirect(response, currentUrl, cookie, userAgent) {
-  const location = getHeader(response.headers, 'Location');
-  if (!location || response.statusCode < 300 || response.statusCode >= 400) {
-    return { followed: false, drawUrl: '', response, cookie };
+  let currentResponse = response;
+  let current = currentUrl;
+  let drawUrl = '';
+  let followed = false;
+
+  for (let index = 0; index < 3; index += 1) {
+    const location = getHeader(currentResponse.headers, 'Location');
+    if (!location || currentResponse.statusCode < 300 || currentResponse.statusCode >= 400) break;
+
+    const nextUrl = resolveRedirectUrl(location, current);
+    followed = true;
+    if (/[?&]do=draw(?:&|$)/.test(nextUrl)) drawUrl = nextUrl;
+    log(`签到跳转：${shortUrl(nextUrl)}`);
+    currentResponse = await fetchText(nextUrl, {
+      method: 'GET',
+      cookie,
+      userAgent,
+      referer: current,
+    });
+    log(`签到跳转后：HTTP ${currentResponse.statusCode}`);
+    cookie = mergeResponseCookieToStore(cookie, currentResponse.headers, '签到跳转');
+    current = nextUrl;
   }
 
-  const nextUrl = new URL(location.replace(/^\.\//, '/'), BASE).href;
-  log(`签到跳转：${shortUrl(nextUrl)}`);
-  const next = await fetchText(nextUrl, {
-    method: 'GET',
-    cookie,
-    userAgent,
-    referer: currentUrl,
-  });
-  log(`签到跳转后：HTTP ${next.statusCode}`);
-  cookie = mergeResponseCookieToStore(cookie, next.headers, '签到跳转');
   return {
-    followed: true,
-    drawUrl: /[?&]do=draw(?:&|$)/.test(nextUrl),
-    response: next,
+    followed,
+    drawUrl,
+    response: currentResponse,
     cookie,
   };
 }
@@ -193,6 +207,8 @@ function captureFromRequest() {
   const oldCookie = read('PJ52_COOKIE');
   write('PJ52_COOKIE', cookie);
   write('PJ52_USER_AGENT', userAgent);
+  write('PJ52_CAPTURED_AT', String(Date.now()));
+  writeLastUrl($request.url);
 
   const fields = cookie
     .split(';')
@@ -216,12 +232,14 @@ function captureFromResponse() {
 
   const oldCookie = read('PJ52_COOKIE');
   const merged = mergeCookie(oldCookie, setCookie);
+  writeLastUrl($request && $request.url);
   if (!merged || merged === oldCookie) {
     log('响应头 Cookie 无新增字段');
     return;
   }
 
   write('PJ52_COOKIE', merged);
+  write('PJ52_CAPTURED_AT', String(Date.now()));
   const added = diffCookieNames(oldCookie, merged);
   const msg = `新增字段：${added.join(', ') || '未识别'}\n长度：${merged.length}\nWAF：${/wzws_cid=/.test(merged) ? '已捕获 wzws_cid' : '缺少 wzws_cid，请完成安全验证后刷新页面'}`;
   log(`已合并响应登录态：${msg.replace(/\n/g, '；')}`);
@@ -318,12 +336,20 @@ function normalizeCreditText(text) {
 function fetchText(url, options) {
   const headers = {
     'User-Agent': options.userAgent || DEFAULT_UA,
-    Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+    Accept: options.accept || 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
     'Accept-Language': 'zh-CN,zh;q=0.9',
+    'Accept-Encoding': 'gzip, deflate, br',
     Referer: options.referer || BASE,
     Cookie: options.cookie || '',
+    'Sec-Fetch-Dest': options.contentType ? 'empty' : 'document',
+    'Sec-Fetch-Mode': options.contentType ? 'cors' : 'navigate',
+    'Sec-Fetch-Site': 'same-origin',
   };
-  if (options.contentType) headers['Content-Type'] = options.contentType;
+  if (!options.contentType) headers['Sec-Fetch-User'] = '?1';
+  if (options.contentType) {
+    headers.Origin = BASE;
+    headers['Content-Type'] = options.contentType;
+  }
 
   return $task.fetch({
     url,
@@ -585,6 +611,28 @@ function shortUrl(url) {
   return `${target.pathname}${target.search}`;
 }
 
+function resolveRedirectUrl(location, currentUrl) {
+  const normalized = String(location || '')
+    .replace(/&amp;/g, '&')
+    .replace(/^\.\/+/, '/')
+    .replace(/^\/\/+/, '/');
+  return new URL(normalized, currentUrl || BASE).href;
+}
+
+function safeSameOriginUrl(url) {
+  try {
+    const target = new URL(url, BASE);
+    return target.hostname === 'www.52pojie.cn' ? target.href : '';
+  } catch (error) {
+    return '';
+  }
+}
+
+function writeLastUrl(url) {
+  const target = safeSameOriginUrl(url);
+  if (target) write('PJ52_LAST_URL', target);
+}
+
 function getHeader(headers, name) {
   const target = name.toLowerCase();
   const key = Object.keys(headers || {}).find((item) => item.toLowerCase() === target);
@@ -607,6 +655,7 @@ function mergeResponseCookieToStore(oldCookie, headers, scene) {
   if (!merged || merged === oldCookie) return oldCookie;
 
   write('PJ52_COOKIE', merged);
+  write('PJ52_CAPTURED_AT', String(Date.now()));
   const added = diffCookieNames(oldCookie, merged);
   log(`${scene}：已合并响应 Cookie 字段 ${added.join(', ') || '未识别'}，长度 ${merged.length}`);
   return merged;
@@ -675,6 +724,46 @@ function write(key, value) {
   if (typeof $prefs !== 'undefined') $prefs.setValueForKey(value, key);
 }
 
+function logCaptureState() {
+  const capturedAt = Number(read('PJ52_CAPTURED_AT') || 0);
+  const lastUrl = safeSameOriginUrl(read('PJ52_LAST_URL'));
+  const lastResult = read('PJ52_LAST_RESULT');
+  if (capturedAt) {
+    const age = Date.now() - capturedAt;
+    log(`登录态捕获：${formatAge(age)}前${lastUrl ? `，来源 ${shortUrl(lastUrl)}` : ''}`);
+    if (age > CAPTURE_STALE_WARN_MS) log('登录态提醒：已超过 3 天未刷新，如遇 WAF 请用 Safari 完成验证后刷新页面');
+  } else {
+    log('登录态捕获：未记录时间，建议开启 rewrite 后用 Safari 刷新一次');
+  }
+  if (lastResult) log(`上次结果：${lastResult}`);
+}
+
+function recordRunState(signResult, creditResult) {
+  const result = [todayKey(), signResult].filter(Boolean).join(' ');
+  write('PJ52_LAST_RESULT', result);
+  write('PJ52_LAST_RESULT_AT', String(Date.now()));
+  if (/成功|已签到|已领取/.test(signResult)) write('PJ52_LAST_SUCCESS_AT', String(Date.now()));
+  if (/WAF|安全验证|刷新/.test(signResult)) write('PJ52_LAST_WAF_FAIL_AT', String(Date.now()));
+  if (creditResult) write('PJ52_LAST_CREDIT_SUMMARY', String(creditResult).slice(0, 300));
+}
+
+function todayKey() {
+  const date = new Date();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${date.getFullYear()}-${month}-${day}`;
+}
+
+function formatAge(ms) {
+  if (!Number.isFinite(ms) || ms < 0) return '未知时间';
+  const minutes = Math.floor(ms / 60000);
+  if (minutes < 1) return '1 分钟内';
+  if (minutes < 60) return `${minutes} 分钟`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 48) return `${hours} 小时`;
+  return `${Math.floor(hours / 24)} 天`;
+}
+
 function shouldNotifyCapture(timeKey, oldCookie, newCookie) {
   if (!oldCookie || oldCookie !== newCookie) {
     write(timeKey, String(Date.now()));
@@ -703,6 +792,7 @@ function done(value) {
 
 function finish(message) {
   log(message);
+  recordRunState(message, '');
   notify(NAME, '需处理', message);
   done();
 }
