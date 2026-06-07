@@ -7,11 +7,11 @@
  *
  * QX 配置示例：
  *   [rewrite_local]
- *   ^https:\/\/www\.52pojie\.cn\/ url script-request-header https://raw.githubusercontent.com/xixingchao/qx-scripts/master/qx/52pj_qx.js?v=20260607c
- *   ^https:\/\/www\.52pojie\.cn\/ url script-response-header https://raw.githubusercontent.com/xixingchao/qx-scripts/master/qx/52pj_qx.js?v=20260607c
+ *   ^https:\/\/www\.52pojie\.cn\/ url script-request-header https://raw.githubusercontent.com/xixingchao/qx-scripts/master/qx/52pj_qx.js?v=20260607d
+ *   ^https:\/\/www\.52pojie\.cn\/ url script-response-header https://raw.githubusercontent.com/xixingchao/qx-scripts/master/qx/52pj_qx.js?v=20260607d
  *
  *   [task_local]
- *   16 8 * * * https://raw.githubusercontent.com/xixingchao/qx-scripts/master/qx/52pj_qx.js?v=20260607c, tag=吾爱破解签到, enabled=true
+ *   16 8 * * * https://raw.githubusercontent.com/xixingchao/qx-scripts/master/qx/52pj_qx.js?v=20260607d, tag=吾爱破解签到, enabled=true
  *
  *   [mitm]
  *   hostname = www.52pojie.cn
@@ -22,7 +22,7 @@
  */
 
 const NAME = '吾爱破解签到';
-const VERSION = 'QX-v2-waf-20260607c';
+const VERSION = 'QX-v2-waf-20260607d';
 const BASE = 'https://www.52pojie.cn';
 const PORTAL = `${BASE}/portal.php`;
 const HOME = `${BASE}/home.php`;
@@ -78,7 +78,20 @@ async function main() {
     referer: BASE,
   });
   log(`首页：HTTP ${portal.statusCode}`);
+  const portalCookieBeforeMerge = cookie;
   cookie = mergeResponseCookieToStore(cookie, portal.headers, '首页');
+  if (isSecurityCheck(portal.body)) {
+    if (cookie !== portalCookieBeforeMerge) {
+      portal = await fetchText(PORTAL, {
+        method: 'GET',
+        cookie,
+        userAgent,
+        referer: BASE,
+      });
+      log(`首页：合并新 Cookie 后重试 HTTP ${portal.statusCode}`);
+      cookie = mergeResponseCookieToStore(cookie, portal.headers, '首页重试');
+    }
+  }
   if (isSecurityCheck(portal.body)) {
     const waf = await tryOldWafChallenge(PORTAL, portal.body, cookie, userAgent, BASE, '首页');
     cookie = waf.cookie;
@@ -107,12 +120,25 @@ async function main() {
     referer: PORTAL,
   });
   log(`签到：HTTP ${sign.statusCode}`);
+  const signCookieBeforeMerge = cookie;
   cookie = mergeResponseCookieToStore(cookie, sign.headers, '签到');
+  if (isSecurityCheck(sign.body)) {
+    if (cookie !== signCookieBeforeMerge) {
+      sign = await fetchText(signUrl, {
+        method: 'GET',
+        cookie,
+        userAgent,
+        referer: PORTAL,
+      });
+      log(`签到：合并新 Cookie 后重试 HTTP ${sign.statusCode}`);
+      cookie = mergeResponseCookieToStore(cookie, sign.headers, '签到重试');
+    }
+  }
   if (isSecurityCheck(sign.body)) {
     const waf = await tryOldWafChallenge(signUrl, sign.body, cookie, userAgent, PORTAL, '签到');
     cookie = waf.cookie;
     if (waf.ok) sign = waf.response;
-    else log(`签到：自动 WAF 未通过，${waf.message}`);
+    else return finish(`签到：触发${securityCheckHint(sign.body)}，${waf.message}`);
   }
   const signResult = explainSign(sign.body, sign.statusCode);
   log(signResult);
