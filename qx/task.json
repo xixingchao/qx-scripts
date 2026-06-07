@@ -1,8 +1,8 @@
 {
   "name": "xixingchao",
-  "description": "https://github.com/xixingchao/qx-scripts/tree/main/qx",
+  "description": "https://github.com/xixingchao/qx-scripts/tree/master/Tasks",
   "task": [
-    "16 8 * * * https://raw.githubusercontent.com/xixingchao/qx-scripts/main/qx/52pj_qx.js?v=20260607b, tag=吾爱破解签到, img-url=https://raw.githubusercontent.com/xixingchao/qx-scripts/main/qx/icons/52pojie.png, enabled=true",
-    "18 8 * * * https://raw.githubusercontent.com/xixingchao/qx-scripts/main/qx/nodeseek_qx.js, tag=NodeSeek签到, img-url=https://raw.githubusercontent.com/xixingchao/qx-scripts/main/qx/icons/nodeseek.png, enabled=true"
+    "16 8 * * * https://raw.githubusercontent.com/xixingchao/qx-scripts/master/Tasks/52pj_qx.js, tag=吾爱破解签到, img-url=https://raw.githubusercontent.com/xixingchao/qx-scripts/master/Tasks/icons/52pojie.png, enabled=true",
+    "18 8 * * * https://raw.githubusercontent.com/xixingchao/qx-scripts/master/Tasks/nodeseek_qx.js, tag=NodeSeek签到, img-url=https://raw.githubusercontent.com/xixingchao/qx-scripts/master/Tasks/icons/nodeseek.png, enabled=true"
   ]
 }

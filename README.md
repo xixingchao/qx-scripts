@@ -18,7 +18,13 @@ Quantumult X scripts and rewrite resources for personal sign-in automation.
 Add the task repository from GitHub URL in Quantumult X `Task Repository`:
 
 ```text
-https://github.com/xixingchao/qx-scripts/tree/main/Tasks
+https://github.com/xixingchao/qx-scripts/tree/master/Tasks
+```
+
+If the GitHub directory link cannot be opened in Quantumult X, add the raw task index instead:
+
+```text
+https://raw.githubusercontent.com/xixingchao/qx-scripts/master/Tasks/task.json
 ```
 
 Add the scheduled task subscription from GitHub Raw URL in Quantumult X `Task` resources:

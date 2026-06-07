@@ -7,15 +7,11 @@
  *
  * QX 配置示例：
  *   [rewrite_local]
- *   ^https:\/\/www\.52pojie\.cn\/portal\.php(?:$|\?) url script-request-header https://raw.githubusercontent.com/xixingchao/qx-scripts/main/qx/52pj_qx.js?v=20260607b
- *   ^https:\/\/www\.52pojie\.cn\/portal\.php(?:$|\?) url script-response-header https://raw.githubusercontent.com/xixingchao/qx-scripts/main/qx/52pj_qx.js?v=20260607b
- *   ^https:\/\/www\.52pojie\.cn\/home\.php\?mod=task(?:&|$) url script-request-header https://raw.githubusercontent.com/xixingchao/qx-scripts/main/qx/52pj_qx.js?v=20260607b
- *   ^https:\/\/www\.52pojie\.cn\/home\.php\?mod=task(?:&|$) url script-response-header https://raw.githubusercontent.com/xixingchao/qx-scripts/main/qx/52pj_qx.js?v=20260607b
- *   ^https:\/\/www\.52pojie\.cn\/waf_zw_verify(?:$|\?) url script-request-header https://raw.githubusercontent.com/xixingchao/qx-scripts/main/qx/52pj_qx.js?v=20260607b
- *   ^https:\/\/www\.52pojie\.cn\/waf_zw_verify(?:$|\?) url script-response-header https://raw.githubusercontent.com/xixingchao/qx-scripts/main/qx/52pj_qx.js?v=20260607b
+ *   ^https:\/\/www\.52pojie\.cn\/ url script-request-header https://raw.githubusercontent.com/xixingchao/qx-scripts/master/qx/52pj_qx.js?v=20260607c
+ *   ^https:\/\/www\.52pojie\.cn\/ url script-response-header https://raw.githubusercontent.com/xixingchao/qx-scripts/master/qx/52pj_qx.js?v=20260607c
  *
  *   [task_local]
- *   16 8 * * * https://raw.githubusercontent.com/xixingchao/qx-scripts/main/qx/52pj_qx.js?v=20260607b, tag=吾爱破解签到, enabled=true
+ *   16 8 * * * https://raw.githubusercontent.com/xixingchao/qx-scripts/master/qx/52pj_qx.js?v=20260607c, tag=吾爱破解签到, enabled=true
  *
  *   [mitm]
  *   hostname = www.52pojie.cn
@@ -26,7 +22,7 @@
  */
 
 const NAME = '吾爱破解签到';
-const VERSION = 'QX-v2-waf-20260607b';
+const VERSION = 'QX-v2-waf-20260607c';
 const BASE = 'https://www.52pojie.cn';
 const PORTAL = `${BASE}/portal.php`;
 const HOME = `${BASE}/home.php`;
@@ -146,7 +142,7 @@ function captureFromRequest() {
     .map((item) => item.trim().split('=')[0])
     .filter(Boolean);
   const changed = oldCookie && oldCookie !== cookie ? '已更新' : '已保存';
-  const msg = `字段：${fields.join(', ')}\n长度：${cookie.length}`;
+  const msg = `字段：${fields.join(', ')}\n长度：${cookie.length}\nWAF：${/wzws_cid=/.test(cookie) ? '已捕获 wzws_cid' : '缺少 wzws_cid，请完成安全验证后刷新页面'}`;
   log(`${changed}登录态：${msg.replace(/\n/g, '；')}`);
   if (shouldNotifyCapture('PJ52_CAPTURE_NOTIFY_AT', oldCookie, cookie)) {
     notify(NAME, `${changed}登录态`, msg);
@@ -170,7 +166,7 @@ function captureFromResponse() {
 
   write('PJ52_COOKIE', merged);
   const added = diffCookieNames(oldCookie, merged);
-  const msg = `新增字段：${added.join(', ') || '未识别'}\n长度：${merged.length}`;
+  const msg = `新增字段：${added.join(', ') || '未识别'}\n长度：${merged.length}\nWAF：${/wzws_cid=/.test(merged) ? '已捕获 wzws_cid' : '缺少 wzws_cid，请完成安全验证后刷新页面'}`;
   log(`已合并响应登录态：${msg.replace(/\n/g, '；')}`);
   if (shouldNotifyCapture('PJ52_CAPTURE_NOTIFY_AT', oldCookie, merged)) {
     notify(NAME, '已合并响应登录态', msg);
