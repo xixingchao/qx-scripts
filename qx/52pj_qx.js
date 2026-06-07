@@ -7,11 +7,11 @@
  *
  * QX 配置示例：
  *   [rewrite_local]
- *   ^https:\/\/www\.52pojie\.cn\/ url script-request-header https://raw.githubusercontent.com/xixingchao/qx-scripts/master/qx/52pj_qx.js?v=20260607e
- *   ^https:\/\/www\.52pojie\.cn\/ url script-response-header https://raw.githubusercontent.com/xixingchao/qx-scripts/master/qx/52pj_qx.js?v=20260607e
+ *   ^https:\/\/www\.52pojie\.cn\/ url script-request-header https://raw.githubusercontent.com/xixingchao/qx-scripts/master/qx/52pj_qx.js?v=20260607f
+ *   ^https:\/\/www\.52pojie\.cn\/ url script-response-header https://raw.githubusercontent.com/xixingchao/qx-scripts/master/qx/52pj_qx.js?v=20260607f
  *
  *   [task_local]
- *   16 8 * * * https://raw.githubusercontent.com/xixingchao/qx-scripts/master/qx/52pj_qx.js?v=20260607e, tag=吾爱破解签到, enabled=true
+ *   16 8 * * * https://raw.githubusercontent.com/xixingchao/qx-scripts/master/qx/52pj_qx.js?v=20260607f, tag=吾爱破解签到, enabled=true
  *
  *   [mitm]
  *   hostname = www.52pojie.cn
@@ -22,7 +22,7 @@
  */
 
 const NAME = '吾爱破解签到';
-const VERSION = 'QX-v2-waf-20260607e';
+const VERSION = 'QX-v2-waf-20260607f';
 const BASE = 'https://www.52pojie.cn';
 const PORTAL = `${BASE}/portal.php`;
 const HOME = `${BASE}/home.php`;
@@ -241,25 +241,61 @@ async function queryCredit(cookie, userAgent) {
   if (isSecurityCheck(res.body)) return `积分页：触发${securityCheckHint(res.body)}，请先过安全验证`;
   if (res.statusCode >= 400) return `积分页：失败 HTTP ${res.statusCode}`;
 
-  const text = stripHtml(res.body);
-  const balances = [];
-  const patterns = [
-    /(吾爱币|热心值|技术值|贡献值|威望|违规|积分)[:：]?\s*(-?\d+)/g,
-    /(吾爱币|热心值|技术值|贡献值|威望|违规|积分)\s*<\/em>\s*<span[^>]*>\s*(-?\d+)/g,
+  const info = parseCredit(res.body);
+  const lines = [];
+  lines.push(info.balances.length ? `积分概况：${info.balances.join('；')}` : '积分概况：未解析到余额，请以页面为准');
+  if (info.records.length) lines.push(`最近记录：${info.records.join('；')}`);
+  return lines.join('\n');
+}
+
+function parseCredit(html) {
+  const raw = normalizeCreditText(stripHtml(html));
+  const balanceMap = new Map();
+  const labels = '吾爱币|热心值|技术值|贡献值|威望|违规|积分';
+  const balancePatterns = [
+    new RegExp(`(${labels})\\s*(?:[:：]|=)?\\s*(-?\\d+)`, 'g'),
+    new RegExp(`(${labels})[^-+\\d]{0,12}(-?\\d+)`, 'g'),
   ];
-  patterns.forEach((pattern) => {
-    for (const match of res.body.matchAll(pattern)) {
-      const item = `${match[1]} ${match[2]}`;
-      if (!balances.includes(item)) balances.push(item);
+  balancePatterns.forEach((pattern) => {
+    for (const match of raw.matchAll(pattern)) {
+      if (!balanceMap.has(match[1])) balanceMap.set(match[1], match[2]);
     }
   });
-  if (!balances.length) {
-    for (const match of text.matchAll(/(吾爱币|热心值|技术值|贡献值|威望|违规|积分)[:：]?\s*(-?\d+)/g)) {
-      const item = `${match[1]} ${match[2]}`;
-      if (!balances.includes(item)) balances.push(item);
-    }
+
+  const records = [];
+  for (const match of raw.matchAll(/(访问推广|每天登录|签到|积分变更|奖励|打卡)[^\n+-]{0,20}([+-]\d+)(?![-\d])/g)) {
+    const item = `${match[1]} ${match[2]}`;
+    if (!records.includes(item)) records.push(item);
+    if (records.length >= 6) break;
   }
-  return balances.length ? `积分概况：${balances.slice(0, 8).join('；')}` : '积分概况：未解析到余额，请以页面为准';
+
+  return {
+    balances: [...balanceMap].slice(0, 8).map(([name, value]) => `${name} ${value}`),
+    records,
+  };
+}
+
+function normalizeCreditText(text) {
+  const map = {
+    'Îá°®±Ò': '吾爱币',
+    'ÈÈÐÄÖµ': '热心值',
+    '¼¼ÊõÖµ': '技术值',
+    '¹±Ï×Öµ': '贡献值',
+    'ÍþÍû': '威望',
+    'Î¥¹æ': '违规',
+    '»ý·Ö': '积分',
+    '·ÃÎÊÍÆ¹ã': '访问推广',
+    'Ã¿ÌìµÇÂ¼': '每天登录',
+    'Ç©µ½': '签到',
+    '»ý·Ö±ä¸ü': '积分变更',
+    '½±Àø': '奖励',
+    '´ò¿¨': '打卡',
+  };
+  let output = String(text || '');
+  Object.keys(map).forEach((key) => {
+    output = output.split(key).join(map[key]);
+  });
+  return output;
 }
 
 function fetchText(url, options) {
