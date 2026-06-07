@@ -7,11 +7,11 @@
  *
  * QX 配置示例：
  *   [rewrite_local]
- *   ^https:\/\/www\.52pojie\.cn\/ url script-request-header https://raw.githubusercontent.com/xixingchao/qx-scripts/master/qx/52pj_qx.js?v=20260607d
- *   ^https:\/\/www\.52pojie\.cn\/ url script-response-header https://raw.githubusercontent.com/xixingchao/qx-scripts/master/qx/52pj_qx.js?v=20260607d
+ *   ^https:\/\/www\.52pojie\.cn\/ url script-request-header https://raw.githubusercontent.com/xixingchao/qx-scripts/master/qx/52pj_qx.js?v=20260607e
+ *   ^https:\/\/www\.52pojie\.cn\/ url script-response-header https://raw.githubusercontent.com/xixingchao/qx-scripts/master/qx/52pj_qx.js?v=20260607e
  *
  *   [task_local]
- *   16 8 * * * https://raw.githubusercontent.com/xixingchao/qx-scripts/master/qx/52pj_qx.js?v=20260607d, tag=吾爱破解签到, enabled=true
+ *   16 8 * * * https://raw.githubusercontent.com/xixingchao/qx-scripts/master/qx/52pj_qx.js?v=20260607e, tag=吾爱破解签到, enabled=true
  *
  *   [mitm]
  *   hostname = www.52pojie.cn
@@ -22,7 +22,7 @@
  */
 
 const NAME = '吾爱破解签到';
-const VERSION = 'QX-v2-waf-20260607d';
+const VERSION = 'QX-v2-waf-20260607e';
 const BASE = 'https://www.52pojie.cn';
 const PORTAL = `${BASE}/portal.php`;
 const HOME = `${BASE}/home.php`;
@@ -140,7 +140,14 @@ async function main() {
     if (waf.ok) sign = waf.response;
     else return finish(`签到：触发${securityCheckHint(sign.body)}，${waf.message}`);
   }
-  const signResult = explainSign(sign.body, sign.statusCode);
+  const followed = await followTaskRedirect(sign, signUrl, cookie, userAgent);
+  if (followed.followed) {
+    sign = followed.response;
+    cookie = followed.cookie;
+  }
+  const signResult = followed.drawUrl && sign.statusCode > 0 && sign.statusCode < 400 && !isSecurityCheck(sign.body)
+    ? '签到：成功，任务奖励已领取'
+    : explainSign(sign.body, sign.statusCode);
   log(signResult);
 
   const creditResult = await queryCredit(cookie, userAgent);
@@ -148,6 +155,30 @@ async function main() {
 
   notify(NAME, '运行完成', [signResult, creditResult].join('\n'));
   done();
+}
+
+async function followTaskRedirect(response, currentUrl, cookie, userAgent) {
+  const location = getHeader(response.headers, 'Location');
+  if (!location || response.statusCode < 300 || response.statusCode >= 400) {
+    return { followed: false, drawUrl: '', response, cookie };
+  }
+
+  const nextUrl = new URL(location.replace(/^\.\//, '/'), BASE).href;
+  log(`签到跳转：${shortUrl(nextUrl)}`);
+  const next = await fetchText(nextUrl, {
+    method: 'GET',
+    cookie,
+    userAgent,
+    referer: currentUrl,
+  });
+  log(`签到跳转后：HTTP ${next.statusCode}`);
+  cookie = mergeResponseCookieToStore(cookie, next.headers, '签到跳转');
+  return {
+    followed: true,
+    drawUrl: /[?&]do=draw(?:&|$)/.test(nextUrl),
+    response: next,
+    cookie,
+  };
 }
 
 function captureFromRequest() {
