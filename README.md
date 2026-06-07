@@ -10,6 +10,7 @@ Quantumult X scripts and rewrite resources for personal sign-in automation.
 - `qx/52pj_qx_rewrite.conf`: 52pojie rewrite resource switch for capturing login state. Keep it separate because this site may trigger WAF/security checks.
 - `qx/qx_task.conf`: Quantumult X scheduled task subscription for NodeSeek and 52pojie.
 - `qx/task.json`: Quantumult X task repository index for adding tasks from the in-app task gallery.
+- `qx/icons/`: Site icons used by the Quantumult X task repository cards.
 
 ## Quantumult X
 
@@ -28,8 +29,8 @@ https://raw.githubusercontent.com/xixingchao/qx-scripts/main/qx/qx_task.conf
 Add the rewrite resources from GitHub Raw URL in Quantumult X `Rewrite` resources:
 
 ```text
-https://raw.githubusercontent.com/xixingchao/qx-scripts/main/qx/nodeseek_qx_rewrite.conf
 https://raw.githubusercontent.com/xixingchao/qx-scripts/main/qx/52pj_qx_rewrite.conf
+https://raw.githubusercontent.com/xixingchao/qx-scripts/main/qx/nodeseek_qx_rewrite.conf
 ```
 
 The rewrite resources reference the JavaScript files by GitHub Raw URL, so Quantumult X can fetch the scripts directly.
