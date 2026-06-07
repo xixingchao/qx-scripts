@@ -7,13 +7,15 @@
  *
  * QX 配置示例：
  *   [rewrite_local]
- *   ^https:\/\/www\.52pojie\.cn\/portal\.php(?:$|\?) url script-request-header https://raw.githubusercontent.com/xixingchao/qx-scripts/main/qx/52pj_qx.js?v=20260606b
- *   ^https:\/\/www\.52pojie\.cn\/portal\.php(?:$|\?) url script-response-header https://raw.githubusercontent.com/xixingchao/qx-scripts/main/qx/52pj_qx.js?v=20260606b
- *   ^https:\/\/www\.52pojie\.cn\/home\.php\?mod=task(?:&|$) url script-request-header https://raw.githubusercontent.com/xixingchao/qx-scripts/main/qx/52pj_qx.js?v=20260606b
- *   ^https:\/\/www\.52pojie\.cn\/home\.php\?mod=task(?:&|$) url script-response-header https://raw.githubusercontent.com/xixingchao/qx-scripts/main/qx/52pj_qx.js?v=20260606b
+ *   ^https:\/\/www\.52pojie\.cn\/portal\.php(?:$|\?) url script-request-header https://raw.githubusercontent.com/xixingchao/qx-scripts/main/qx/52pj_qx.js?v=20260607b
+ *   ^https:\/\/www\.52pojie\.cn\/portal\.php(?:$|\?) url script-response-header https://raw.githubusercontent.com/xixingchao/qx-scripts/main/qx/52pj_qx.js?v=20260607b
+ *   ^https:\/\/www\.52pojie\.cn\/home\.php\?mod=task(?:&|$) url script-request-header https://raw.githubusercontent.com/xixingchao/qx-scripts/main/qx/52pj_qx.js?v=20260607b
+ *   ^https:\/\/www\.52pojie\.cn\/home\.php\?mod=task(?:&|$) url script-response-header https://raw.githubusercontent.com/xixingchao/qx-scripts/main/qx/52pj_qx.js?v=20260607b
+ *   ^https:\/\/www\.52pojie\.cn\/waf_zw_verify(?:$|\?) url script-request-header https://raw.githubusercontent.com/xixingchao/qx-scripts/main/qx/52pj_qx.js?v=20260607b
+ *   ^https:\/\/www\.52pojie\.cn\/waf_zw_verify(?:$|\?) url script-response-header https://raw.githubusercontent.com/xixingchao/qx-scripts/main/qx/52pj_qx.js?v=20260607b
  *
  *   [task_local]
- *   16 8 * * * 52pj_qx.js, tag=吾爱破解签到, enabled=true
+ *   16 8 * * * https://raw.githubusercontent.com/xixingchao/qx-scripts/main/qx/52pj_qx.js?v=20260607b, tag=吾爱破解签到, enabled=true
  *
  *   [mitm]
  *   hostname = www.52pojie.cn
@@ -24,7 +26,7 @@
  */
 
 const NAME = '吾爱破解签到';
-const VERSION = 'QX-v2-waf-20260606';
+const VERSION = 'QX-v2-waf-20260607b';
 const BASE = 'https://www.52pojie.cn';
 const PORTAL = `${BASE}/portal.php`;
 const HOME = `${BASE}/home.php`;
@@ -153,8 +155,8 @@ function captureFromRequest() {
 
 function captureFromResponse() {
   const headers = $response.headers || {};
-  const setCookie = getHeader(headers, 'Set-Cookie') || getHeader(headers, 'set-cookie');
-  if (!setCookie) {
+  const setCookie = getSetCookie(headers);
+  if (!setCookie.length) {
     log('响应头未发现 Set-Cookie');
     return;
   }
@@ -272,7 +274,7 @@ async function tryOldWafChallenge(targetUrl, html, cookie, userAgent, referer, s
   log(`${scene}：验证后重试 HTTP ${retry.statusCode}`);
   cookie = mergeResponseCookieToStore(cookie, retry.headers, `${scene}重试`);
   return {
-    ok: retry.statusCode > 0 && !isSecurityCheck(retry.body),
+    ok: retry.statusCode > 0 && retry.statusCode < 400 && !isSecurityCheck(retry.body),
     cookie,
     response: retry,
     message: '旧版 WAF 自动验证未通过，请用 Safari 完成安全验证后刷新页面',
@@ -476,9 +478,17 @@ function getHeader(headers, name) {
   return key ? headers[key] : '';
 }
 
+function getSetCookie(headers) {
+  const values = [];
+  Object.keys(headers || {}).forEach((key) => {
+    if (key.toLowerCase() === 'set-cookie') values.push(headers[key]);
+  });
+  return values;
+}
+
 function mergeResponseCookieToStore(oldCookie, headers, scene) {
-  const setCookie = getHeader(headers, 'Set-Cookie') || getHeader(headers, 'set-cookie');
-  if (!setCookie) return oldCookie;
+  const setCookie = getSetCookie(headers);
+  if (!setCookie.length) return oldCookie;
 
   const merged = mergeCookie(oldCookie, setCookie);
   if (!merged || merged === oldCookie) return oldCookie;
@@ -491,7 +501,7 @@ function mergeResponseCookieToStore(oldCookie, headers, scene) {
 
 function mergeCookie(oldCookie, setCookie) {
   const jar = parseCookiePairs(oldCookie);
-  const lines = Array.isArray(setCookie) ? setCookie : String(setCookie || '').split(/,(?=\s*[^;,=\s]+=[^;,]*)/);
+  const lines = normalizeSetCookieLines(setCookie);
   lines.forEach((line) => {
     const first = String(line || '').split(';')[0].trim();
     const index = first.indexOf('=');
@@ -504,6 +514,24 @@ function mergeCookie(oldCookie, setCookie) {
   return Object.keys(jar)
     .map((name) => `${name}=${jar[name]}`)
     .join('; ');
+}
+
+function normalizeSetCookieLines(setCookie) {
+  const values = Array.isArray(setCookie) ? setCookie : [setCookie];
+  const lines = [];
+  values.forEach((value) => {
+    if (!value) return;
+    if (Array.isArray(value)) {
+      lines.push(...normalizeSetCookieLines(value));
+      return;
+    }
+    String(value)
+      .split(/,(?=\s*[^;,=\s]+=[^;,]*)/)
+      .map((line) => line.trim())
+      .filter(Boolean)
+      .forEach((line) => lines.push(line));
+  });
+  return lines;
 }
 
 function parseCookiePairs(cookie) {
