@@ -7,11 +7,11 @@
  *
  * QX 配置示例：
  *   [rewrite_local]
- *   ^https:\/\/www\.52pojie\.cn\/ url script-request-header https://raw.githubusercontent.com/xixingchao/qx-scripts/master/qx/52pj_qx.js?v=20260607g
- *   ^https:\/\/www\.52pojie\.cn\/ url script-response-header https://raw.githubusercontent.com/xixingchao/qx-scripts/master/qx/52pj_qx.js?v=20260607g
+ *   ^https:\/\/www\.52pojie\.cn\/ url script-request-header https://raw.githubusercontent.com/xixingchao/qx-scripts/master/qx/52pj_qx.js?v=20260607h
+ *   ^https:\/\/www\.52pojie\.cn\/ url script-response-header https://raw.githubusercontent.com/xixingchao/qx-scripts/master/qx/52pj_qx.js?v=20260607h
  *
  *   [task_local]
- *   16 8 * * * https://raw.githubusercontent.com/xixingchao/qx-scripts/master/qx/52pj_qx.js?v=20260607g, tag=吾爱破解签到, enabled=true
+ *   16 8 * * * https://raw.githubusercontent.com/xixingchao/qx-scripts/master/qx/52pj_qx.js?v=20260607h, tag=吾爱破解签到, enabled=true
  *
  *   [mitm]
  *   hostname = www.52pojie.cn
@@ -22,7 +22,7 @@
  */
 
 const NAME = '吾爱破解签到';
-const VERSION = 'QX-v2-waf-20260607g';
+const VERSION = 'QX-v2-waf-20260607h';
 const BASE = 'https://www.52pojie.cn';
 const PORTAL = `${BASE}/portal.php`;
 const HOME = `${BASE}/home.php`;
@@ -95,7 +95,7 @@ async function main() {
   if (isSecurityCheck(portal.body)) {
     const waf = await tryOldWafChallenge(PORTAL, portal.body, cookie, userAgent, BASE, '首页');
     cookie = waf.cookie;
-    if (!waf.ok) return finish(`首页：触发${securityCheckHint(portal.body)}，${waf.message}`);
+    if (!waf.ok) return finish(`首页：触发${securityCheckHint(portal.body)}，${wafRefreshMessage(cookie)}`);
     portal = waf.response;
     if (isSecurityCheck(portal.body)) return finish(`首页：自动验证后仍触发${securityCheckHint(portal.body)}，请先用 Safari 完成安全验证后刷新页面`);
   }
@@ -138,7 +138,7 @@ async function main() {
     const waf = await tryOldWafChallenge(signUrl, sign.body, cookie, userAgent, PORTAL, '签到');
     cookie = waf.cookie;
     if (waf.ok) sign = waf.response;
-    else return finish(`签到：触发${securityCheckHint(sign.body)}，${waf.message}`);
+    else return finish(`签到：触发${securityCheckHint(sign.body)}，${wafRefreshMessage(cookie)}`);
   }
   const followed = await followTaskRedirect(sign, signUrl, cookie, userAgent);
   if (followed.followed) {
@@ -354,7 +354,7 @@ async function tryOldWafChallenge(targetUrl, html, cookie, userAgent, referer, s
     return {
       ok: false,
       cookie,
-      message: '未识别旧版 WAF 参数，可能是新版动态验证；请用 Safari 完成安全验证后刷新页面',
+      message: '未识别旧版 WAF 参数',
     };
   }
 
@@ -385,6 +385,13 @@ async function tryOldWafChallenge(targetUrl, html, cookie, userAgent, referer, s
     response: retry,
     message: '旧版 WAF 自动验证未通过，请用 Safari 完成安全验证后刷新页面',
   };
+}
+
+function wafRefreshMessage(cookie) {
+  const fields = [];
+  fields.push(/wzws_cid=/.test(cookie) ? '有 wzws_cid' : '缺 wzws_cid');
+  fields.push(/wzws_sid=/.test(cookie) ? '有 wzws_sid' : '缺 wzws_sid');
+  return `${fields.join('，')}，但当前 Cookie 已被新版动态 WAF 拦截；请用 Safari 打开 52pojie 页面完成验证并刷新一次，等 QX 重写重新捕获后再运行`;
 }
 
 function extractOldWafParams(html) {
