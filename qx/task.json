@@ -1,0 +1,8 @@
+{
+  "name": "xixingchao",
+  "description": "https://github.com/xixingchao/qx-scripts/tree/main/qx",
+  "task": [
+    "16 8 * * * https://raw.githubusercontent.com/xixingchao/qx-scripts/main/qx/52pj_qx.js?v=20260607b, tag=吾爱破解签到, img-url=https://raw.githubusercontent.com/Orz-3/mini/master/Color/github.png, enabled=true",
+    "18 8 * * * https://raw.githubusercontent.com/xixingchao/qx-scripts/main/qx/nodeseek_qx.js, tag=NodeSeek签到, img-url=https://raw.githubusercontent.com/Orz-3/mini/master/Color/github.png, enabled=true"
+  ]
+}

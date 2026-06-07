@@ -9,8 +9,15 @@ Quantumult X scripts and rewrite resources for personal sign-in automation.
 - `qx/52pj_qx.js`: 52pojie scheduled check-in helper and request-header capture script.
 - `qx/52pj_qx_rewrite.conf`: 52pojie rewrite resource switch for capturing login state. Keep it separate because this site may trigger WAF/security checks.
 - `qx/qx_task.conf`: Quantumult X scheduled task subscription for NodeSeek and 52pojie.
+- `qx/task.json`: Quantumult X task repository index for adding tasks from the in-app task gallery.
 
 ## Quantumult X
+
+Add the task repository from GitHub URL in Quantumult X `Task Repository`:
+
+```text
+https://github.com/xixingchao/qx-scripts/tree/main/qx
+```
 
 Add the scheduled task subscription from GitHub Raw URL in Quantumult X `Task` resources:
 
